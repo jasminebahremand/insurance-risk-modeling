@@ -37,4 +37,4 @@ Python, Pandas, Scikit-learn, XGBoost, LightGBM, SHAP
 - `insurance_risk_modeling_presentation.pdf` — presentation deck
 
 ## Note
-This repository contains a reconstructed version of the original project workflow for portfolio purposes. It is designed to closely reflect the methods, modeling choices, and interpretation described in the report and presentation, though exact implementation details may differ from the original team submission. 
+Note: Code is a reconstructed version of the original project workflow based on the report and results.
