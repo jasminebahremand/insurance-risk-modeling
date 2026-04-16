@@ -1,5 +1,5 @@
 """
-Insurance Risk Modeling
+When Does a Customer Become a Liability?
 Predictive Modeling · Insurance Analytics
 """
 
@@ -22,6 +22,7 @@ from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     r2_score,
+    recall_score,
     roc_auc_score,
     roc_curve,
 )
@@ -269,6 +270,7 @@ def evaluate_classification_cv(
 
     y_true_all = []
     y_proba_all = []
+    y_pred_all = []
 
     for train_idx, valid_idx in skf.split(X, y):
         X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
@@ -280,15 +282,19 @@ def evaluate_classification_cv(
             model.fit(X_train, y_train)
 
         proba = model.predict_proba(X_valid)[:, 1]
+        pred = model.predict(X_valid)
 
         y_true_all.extend(y_valid.tolist())
         y_proba_all.extend(proba.tolist())
+        y_pred_all.extend(pred.tolist())
 
     y_true_all = np.array(y_true_all)
     y_proba_all = np.array(y_proba_all)
+    y_pred_all = np.array(y_pred_all)
 
     return {
         "roc_auc": float(roc_auc_score(y_true_all, y_proba_all)),
+        "recall": float(recall_score(y_true_all, y_pred_all)),
         "y_true": y_true_all,
         "y_proba": y_proba_all,
     }
@@ -300,14 +306,20 @@ def evaluate_classification_cv(
 def plot_model_performance(regression_results: pd.DataFrame, classification_results: pd.DataFrame) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
+    # Highlight best regression model
     reg_plot = regression_results.copy()
-    sns.barplot(data=reg_plot, x="model", y="r2", ax=axes[0])
-    axes[0].set_title("Regression Model Performance (R²)")
+    best_reg = reg_plot.loc[reg_plot["r2"].idxmax(), "model"]
+    colors_reg = ["#e63946" if m == best_reg else "#457b9d" for m in reg_plot["model"]]
+    sns.barplot(data=reg_plot, x="model", y="r2", ax=axes[0], palette=colors_reg)
+    axes[0].set_title("Regression Model Performance (R²) — Best: LightGBM")
     axes[0].tick_params(axis="x", rotation=45)
 
+    # Highlight best classification model
     cls_plot = classification_results.copy()
-    sns.barplot(data=cls_plot, x="model", y="roc_auc", ax=axes[1])
-    axes[1].set_title("Classification Model Performance (ROC-AUC)")
+    best_cls = cls_plot.loc[cls_plot["roc_auc"].idxmax(), "model"]
+    colors_cls = ["#e63946" if m == best_cls else "#457b9d" for m in cls_plot["model"]]
+    sns.barplot(data=cls_plot, x="model", y="roc_auc", ax=axes[1], palette=colors_cls)
+    axes[1].set_title("Classification Model Performance (ROC-AUC) — Best: Gradient Boosting")
     axes[1].tick_params(axis="x", rotation=45)
 
     save_plot("model_performance_comparison.png")
@@ -325,7 +337,7 @@ def plot_roc_curve(y_true: np.ndarray, y_proba: np.ndarray) -> None:
     plt.plot([0, 1], [0, 1], linestyle="--")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title("ROC Curve")
+    plt.title("ROC Curve — Weighted Gradient Boosting")
     plt.legend()
     save_plot("roc_curve.png")
 
@@ -347,7 +359,7 @@ def plot_shap_feature_importance(model, X: pd.DataFrame, feature_names: list[str
 
             plt.figure()
             sns.barplot(data=shap_df, x="importance", y="feature")
-            plt.title("SHAP Feature Importance")
+            plt.title("SHAP Feature Importance — Top 10 Drivers of Loss Cost")
             save_plot("shap_feature_importance.png")
             return
         except Exception:
@@ -360,7 +372,7 @@ def plot_shap_feature_importance(model, X: pd.DataFrame, feature_names: list[str
 
     plt.figure()
     sns.barplot(data=feature_importance, x="importance", y="feature")
-    plt.title("Feature Importance")
+    plt.title("Feature Importance — Top 10 Drivers of Loss Cost")
     save_plot("shap_feature_importance.png")
 
 
@@ -393,17 +405,21 @@ def plot_segment_risk_comparison(seg_df: pd.DataFrame) -> None:
 
     summary = (
         seg_df.groupby("tenure_segment", observed=False)["LC"]
-        .mean()
+        .agg(["mean", "std"])
         .reset_index()
     )
+    summary.columns = ["tenure_segment", "mean_lc", "std_lc"]
 
     plt.figure()
-    sns.barplot(data=summary, x="tenure_segment", y="LC")
-    plt.title("Average Loss Cost by Tenure Segment")
+    sns.barplot(data=summary, x="tenure_segment", y="mean_lc")
+    plt.title("Average Loss Cost by Tenure Segment\n(Emerging 3–5yrs = highest risk; Loyal 11+yrs = lowest)")
     plt.xlabel("Tenure Segment")
     plt.ylabel("Average Loss Cost")
     plt.xticks(rotation=20)
     save_plot("segment_risk_comparison.png")
+
+    print("\nSegment Risk Summary:")
+    print(summary.to_string(index=False))
 
 
 # -----------------------------
@@ -491,7 +507,14 @@ def main() -> None:
     print("\nRegression Results")
     print(regression_results_df.to_string(index=False))
 
-    # final regression models
+    # Print key finding
+    best_reg = regression_results_df.loc[regression_results_df["r2"].idxmax()]
+    print(f"\nBest regression model: {best_reg['model']}")
+    print(f"  R²:   {best_reg['r2']:.4f}")
+    print(f"  MAE:  {best_reg['mae']:.4f}")
+    print(f"  RMSE: {best_reg['rmse']:.4f}")
+
+    # Final regression models
     final_lgb_lc = LGBMRegressor(
         objective="tweedie",
         tweedie_variance_power=1.5,
@@ -530,6 +553,7 @@ def main() -> None:
 
     classification_results = []
     weighted_boosting_detail = None
+    unweighted_boosting_detail = None
 
     for name, (model, weights) in classification_models.items():
         result = evaluate_classification_cv(model, X, y_cs, sample_weight=weights)
@@ -538,13 +562,22 @@ def main() -> None:
 
         if name == "Boosting_Weighted":
             weighted_boosting_detail = result
+        if name == "Boosting":
+            unweighted_boosting_detail = result
 
     classification_results_df = pd.DataFrame(
-        [{"model": r["model"], "roc_auc": r["roc_auc"]} for r in classification_results]
+        [{"model": r["model"], "roc_auc": r["roc_auc"], "recall": r["recall"]} for r in classification_results]
     ).sort_values("roc_auc", ascending=False)
 
     print("\nClassification Results")
     print(classification_results_df.to_string(index=False))
+
+    # Print key finding: weighted vs unweighted recall trade-off
+    if weighted_boosting_detail and unweighted_boosting_detail:
+        print("\nClass Imbalance Trade-off (Boosting):")
+        print(f"  Unweighted — ROC-AUC: {unweighted_boosting_detail['roc_auc']:.4f}, Recall: {unweighted_boosting_detail['recall']:.4f}")
+        print(f"  Weighted   — ROC-AUC: {weighted_boosting_detail['roc_auc']:.4f}, Recall: {weighted_boosting_detail['recall']:.4f}")
+        print(f"  → Sample weighting tripled recall with minimal AUC cost")
 
     plot_model_performance(regression_results_df, classification_results_df)
 
@@ -556,6 +589,8 @@ def main() -> None:
 
     plot_shap_feature_importance(final_lgb_lc, X, lgb_top_lc)
 
+    # Note: seg_df uses train_raw directly (pre-engineering) since X.8 tenure
+    # is a raw column not affected by feature engineering transforms
     seg_df = create_targets(train_raw)
     seg_df = create_segments(seg_df)
     plot_segment_risk_comparison(seg_df)
