@@ -1,56 +1,39 @@
 """
-insurance_risk_model.py
-
-Reconstructed workflow closely aligned to the original insurance project report.
-
-Key features of this reconstruction:
-- Target creation:
-    LC   = X.15 / X.16
-    HALC = (X.15 / X.16) * X.18
-    CS   = 1 if claim occurs, else 0
-- Label encoding for categorical variables
-- Median imputation for missing values
-- Temporal feature engineering
-- 5-fold cross-validation
-- Model-specific feature selection
-- Regression models: MLP, GLM(Tweedie), XGBoost, LightGBM
-- Classification models: Boosting, Boosting(weighted), Random Forest,
-  Logistic Regression, Logistic Lasso, Logistic Ridge, MLP
-- SHAP interpretation for final LightGBM model
-- Segment analysis by tenure and premium
-
-This is a portfolio-quality reconstruction based on the project report/presentation.
+Insurance Risk Modeling
+Predictive Modeling · Insurance Analytics
 """
 
 from __future__ import annotations
 
+import os
 import warnings
-warnings.filterwarnings("ignore")
-
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
+import seaborn as sns
+from lightgbm import LGBMRegressor
+from scipy.stats import pointbiserialr
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
+from sklearn.inspection import permutation_importance
+from sklearn.linear_model import LogisticRegression, TweedieRegressor
 from sklearn.metrics import (
-    mean_squared_error,
+    auc,
     mean_absolute_error,
+    mean_squared_error,
     r2_score,
     roc_auc_score,
-    confusion_matrix,
-    classification_report,
+    roc_curve,
 )
 from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.preprocessing import OrdinalEncoder
-from sklearn.inspection import permutation_importance
-from sklearn.linear_model import TweedieRegressor, LogisticRegression
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.neural_network import MLPRegressor, MLPClassifier
-
 from xgboost import XGBRegressor
-from lightgbm import LGBMRegressor
+
+warnings.filterwarnings("ignore")
 
 try:
     import shap
@@ -59,13 +42,13 @@ except Exception:
     SHAP_AVAILABLE = False
 
 
-# =========================================================
-# CONFIG
-# =========================================================
-
+# -----------------------------
+# Config
+# -----------------------------
 TRAIN_PATH = Path("insurance_train.csv")
 TEST_PATH = Path("insurance_test.csv")
 PREDICTION_OUTPUT = Path("insurance_risk_predictions.csv")
+PLOTS_DIR = "plots"
 
 RANDOM_STATE = 42
 N_SPLITS = 5
@@ -73,15 +56,18 @@ N_SPLITS = 5
 DATE_COLS = ["X.2", "X.3", "X.4", "X.5", "X.6"]
 CATEGORICAL_COLS = ["X.7", "X.13", "X.19", "X.20", "X.21", "X.27"]
 
-# Project brief variable meanings used in comments
-# X.8  = years with insurer
-# X.14 = net premium
-# X.22 = vehicle registration year
+sns.set_theme(style="whitegrid")
+plt.rcParams["figure.figsize"] = (10, 6)
 
 
-# =========================================================
-# HELPERS
-# =========================================================
+# -----------------------------
+# Helpers
+# -----------------------------
+def save_plot(filename: str) -> None:
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, filename), dpi=300, bbox_inches="tight")
+    plt.close()
+
 
 def check_files() -> None:
     if not TRAIN_PATH.exists():
@@ -90,20 +76,23 @@ def check_files() -> None:
         raise FileNotFoundError(f"Missing test file: {TEST_PATH}")
 
 
-def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    df_train = pd.read_csv(TRAIN_PATH)
-    df_test = pd.read_csv(TEST_PATH)
-    return df_train, df_test
+def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
+# -----------------------------
+# Load data
+# -----------------------------
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    train_df = pd.read_csv(TRAIN_PATH)
+    test_df = pd.read_csv(TEST_PATH)
+    return train_df, test_df
+
+
+# -----------------------------
+# Targets and feature engineering
+# -----------------------------
 def create_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build targets from raw insurance fields.
-
-    LC   = X.15 / X.16
-    HALC = LC * X.18
-    CS   = claim indicator
-    """
     df = df.copy()
 
     x15 = pd.to_numeric(df["X.15"], errors="coerce")
@@ -114,21 +103,14 @@ def create_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["LC"] = 0.0
     df["HALC"] = 0.0
 
-    mask = x16 > 0
-    df.loc[mask, "LC"] = (x15[mask] / x16[mask]).fillna(0.0)
-    df.loc[mask, "HALC"] = (df.loc[mask, "LC"] * x18[mask]).fillna(0.0)
+    valid = x16 > 0
+    df.loc[valid, "LC"] = (x15[valid] / x16[valid]).fillna(0.0)
+    df.loc[valid, "HALC"] = (df.loc[valid, "LC"] * x18[valid]).fillna(0.0)
 
     return df
 
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Temporal feature engineering aligned to the report:
-    - age
-    - license years
-    - contract date parts
-    - a few sensible derived features from the same date fields
-    """
     df = df.copy()
 
     for col in DATE_COLS:
@@ -137,98 +119,116 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     reference_year = 2020
 
-    # X.5 = date of birth
     if "X.5" in df.columns:
         df["age"] = reference_year - df["X.5"].dt.year
 
-    # X.6 = driver license issuance date
     if "X.6" in df.columns:
         df["license_years"] = reference_year - df["X.6"].dt.year
 
-    # X.22 = vehicle registration year
     if "X.22" in df.columns:
         df["vehicle_age"] = reference_year - pd.to_numeric(df["X.22"], errors="coerce")
 
-    # X.2 = contract start date
     if "X.2" in df.columns:
         df["contract_start_year"] = df["X.2"].dt.year
         df["contract_start_month"] = df["X.2"].dt.month
         df["contract_start_weekday"] = df["X.2"].dt.weekday
 
-    # Useful derived durations
     if {"X.2", "X.4"}.issubset(df.columns):
         df["policy_duration_days"] = (df["X.4"] - df["X.2"]).dt.days
 
     if {"X.2", "X.3"}.issubset(df.columns):
         df["days_since_last_renewal"] = (df["X.3"] - df["X.2"]).dt.days
 
-    # Drop raw date fields after extracting information
     df = df.drop(columns=[c for c in DATE_COLS if c in df.columns], errors="ignore")
-
     return df
 
 
-def preprocess_like_project(
-    df_train: pd.DataFrame,
-    df_test: pd.DataFrame,
-    fit_cols: List[str],
-) -> Tuple[pd.DataFrame, pd.DataFrame, OrdinalEncoder, SimpleImputer]:
-    """
-    Project-consistent preprocessing:
-    - label encoding for categorical variables
-    - median imputation for missing values
+def preprocess_data(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    X_train = train_df[feature_cols].copy()
+    X_test = test_df[feature_cols].copy()
 
-    Returns processed train/test with same columns.
-    """
-    X_train = df_train[fit_cols].copy()
-    X_test = df_test[fit_cols].copy()
-
-    # Label encoding via OrdinalEncoder on known categorical columns present in data
     cat_cols = [c for c in CATEGORICAL_COLS if c in X_train.columns]
-    non_cat_cols = [c for c in X_train.columns if c not in cat_cols]
-
-    encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
 
     if cat_cols:
+        encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
         X_train[cat_cols] = encoder.fit_transform(X_train[cat_cols].astype(str))
         X_test[cat_cols] = encoder.transform(X_test[cat_cols].astype(str))
 
-    # Median imputation across all columns
     imputer = SimpleImputer(strategy="median")
-    X_train_imputed = pd.DataFrame(
+
+    X_train = pd.DataFrame(
         imputer.fit_transform(X_train),
         columns=X_train.columns,
         index=X_train.index,
     )
-    X_test_imputed = pd.DataFrame(
+    X_test = pd.DataFrame(
         imputer.transform(X_test),
         columns=X_test.columns,
         index=X_test.index,
     )
 
-    # Preserve numeric type
-    X_train_imputed = X_train_imputed.apply(pd.to_numeric, errors="coerce")
-    X_test_imputed = X_test_imputed.apply(pd.to_numeric, errors="coerce")
+    X_train = X_train.apply(pd.to_numeric, errors="coerce")
+    X_test = X_test.apply(pd.to_numeric, errors="coerce")
 
-    return X_train_imputed, X_test_imputed, encoder, imputer
-
-
-def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return float(mean_squared_error(y_true, y_pred, squared=False))
+    return X_train, X_test
 
 
-def evaluate_regression_cv(
-    model,
-    X: pd.DataFrame,
-    y: pd.Series,
-    use_log_target: bool = True,
-    n_splits: int = N_SPLITS,
-) -> Dict[str, float]:
-    """
-    5-fold CV regression evaluation.
-    If use_log_target=True, fit on log1p(y) and convert back via expm1.
-    """
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
+# -----------------------------
+# Plot 1: Loss cost distribution
+# -----------------------------
+def plot_loss_cost_distribution(y_lc: pd.Series) -> None:
+    plt.figure()
+    sns.histplot(y_lc, bins=40)
+    plt.title("Loss Cost Distribution")
+    plt.xlabel("Loss Cost")
+    plt.ylabel("Frequency")
+    save_plot("loss_cost_distribution.png")
+
+
+# -----------------------------
+# Feature selection
+# -----------------------------
+def get_glm_top_features(X: pd.DataFrame, y: pd.Series, n_top: int = 8) -> list[str]:
+    glm = TweedieRegressor(power=1.5, alpha=0.1, max_iter=1000)
+    glm.fit(X, y)
+
+    perm = permutation_importance(
+        glm,
+        X,
+        y,
+        n_repeats=5,
+        random_state=RANDOM_STATE,
+        scoring="neg_mean_squared_error",
+    )
+
+    feature_df = pd.DataFrame({
+        "feature": X.columns,
+        "importance": perm.importances_mean,
+    }).sort_values("importance", ascending=False)
+
+    return feature_df.head(n_top)["feature"].tolist()
+
+
+def get_tree_top_features(model, X: pd.DataFrame, y_log: pd.Series, n_top: int = 15) -> list[str]:
+    model.fit(X, y_log)
+
+    feature_df = pd.DataFrame({
+        "feature": X.columns,
+        "importance": model.feature_importances_,
+    }).sort_values("importance", ascending=False)
+
+    return feature_df.head(n_top)["feature"].tolist()
+
+
+# -----------------------------
+# Regression evaluation
+# -----------------------------
+def evaluate_regression_cv(model, X: pd.DataFrame, y: pd.Series, use_log_target: bool = True) -> dict:
+    kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
 
     y_true_all = []
     y_pred_all = []
@@ -259,109 +259,118 @@ def evaluate_regression_cv(
     }
 
 
+# -----------------------------
+# Classification evaluation
+# -----------------------------
 def evaluate_classification_cv(
     model,
     X: pd.DataFrame,
     y: pd.Series,
-    n_splits: int = N_SPLITS,
     sample_weight: Optional[np.ndarray] = None,
-) -> Dict[str, object]:
-    """
-    5-fold CV classification evaluation using ROC-AUC.
-    Also returns confusion matrix / report on pooled out-of-fold predictions.
-    """
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
+) -> dict:
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
 
     y_true_all = []
     y_proba_all = []
 
-    for fold, (train_idx, valid_idx) in enumerate(skf.split(X, y), start=1):
+    for train_idx, valid_idx in skf.split(X, y):
         X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
         y_train, y_valid = y.iloc[train_idx], y.iloc[valid_idx]
 
         if sample_weight is not None:
-            fold_weights = sample_weight[train_idx]
-            model.fit(X_train, y_train, sample_weight=fold_weights)
+            model.fit(X_train, y_train, sample_weight=sample_weight[train_idx])
         else:
             model.fit(X_train, y_train)
 
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(X_valid)[:, 1]
-        else:
-            raise ValueError(f"Model {type(model).__name__} does not support predict_proba.")
+        proba = model.predict_proba(X_valid)[:, 1]
 
         y_true_all.extend(y_valid.tolist())
         y_proba_all.extend(proba.tolist())
 
     y_true_all = np.array(y_true_all)
     y_proba_all = np.array(y_proba_all)
-    y_pred_all = (y_proba_all >= 0.5).astype(int)
 
     return {
         "roc_auc": float(roc_auc_score(y_true_all, y_proba_all)),
-        "confusion_matrix": confusion_matrix(y_true_all, y_pred_all),
-        "classification_report": classification_report(y_true_all, y_pred_all, digits=4),
+        "y_true": y_true_all,
+        "y_proba": y_proba_all,
     }
 
 
-def get_permutation_top_features(
-    X: pd.DataFrame,
-    y: pd.Series,
-    n_top: int = 8,
-) -> List[str]:
-    """
-    Match report logic:
-    GLM used top 8 features from permutation importance.
-    """
-    base_model = TweedieRegressor(power=1.5, alpha=0.1, max_iter=1000)
-    base_model.fit(X, y)
+# -----------------------------
+# Plot 2: Model comparison
+# -----------------------------
+def plot_model_performance(regression_results: pd.DataFrame, classification_results: pd.DataFrame) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    perm = permutation_importance(
-        base_model,
-        X,
-        y,
-        n_repeats=5,
-        random_state=RANDOM_STATE,
-        scoring="neg_mean_squared_error",
-    )
+    reg_plot = regression_results.copy()
+    sns.barplot(data=reg_plot, x="model", y="r2", ax=axes[0])
+    axes[0].set_title("Regression Model Performance (R²)")
+    axes[0].tick_params(axis="x", rotation=45)
 
-    importance_df = pd.DataFrame({
-        "feature": X.columns,
-        "importance": perm.importances_mean,
-    }).sort_values("importance", ascending=False)
+    cls_plot = classification_results.copy()
+    sns.barplot(data=cls_plot, x="model", y="roc_auc", ax=axes[1])
+    axes[1].set_title("Classification Model Performance (ROC-AUC)")
+    axes[1].tick_params(axis="x", rotation=45)
 
-    return importance_df.head(n_top)["feature"].tolist()
+    save_plot("model_performance_comparison.png")
 
 
-def get_tree_top_features(
-    model,
-    X: pd.DataFrame,
-    y_log: pd.Series,
-    n_top: int = 15,
-) -> List[str]:
-    """
-    Match report logic:
-    XGBoost and LightGBM used top-ranked features from internal feature importance.
-    """
-    model.fit(X, y_log)
+# -----------------------------
+# Plot 3: ROC curve
+# -----------------------------
+def plot_roc_curve(y_true: np.ndarray, y_proba: np.ndarray) -> None:
+    fpr, tpr, _ = roc_curve(y_true, y_proba)
+    roc_auc = auc(fpr, tpr)
 
-    if not hasattr(model, "feature_importances_"):
-        raise ValueError(f"{type(model).__name__} has no feature_importances_")
+    plt.figure()
+    plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")
+    plt.plot([0, 1], [0, 1], linestyle="--")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve")
+    plt.legend()
+    save_plot("roc_curve.png")
 
-    importance_df = pd.DataFrame({
-        "feature": X.columns,
+
+# -----------------------------
+# Plot 4: SHAP / feature importance
+# -----------------------------
+def plot_shap_feature_importance(model, X: pd.DataFrame, feature_names: list[str]) -> None:
+    if SHAP_AVAILABLE:
+        try:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X[feature_names])
+            mean_abs_shap = np.abs(shap_values).mean(axis=0)
+
+            shap_df = pd.DataFrame({
+                "feature": feature_names,
+                "importance": mean_abs_shap,
+            }).sort_values("importance", ascending=False).head(10)
+
+            plt.figure()
+            sns.barplot(data=shap_df, x="importance", y="feature")
+            plt.title("SHAP Feature Importance")
+            save_plot("shap_feature_importance.png")
+            return
+        except Exception:
+            pass
+
+    feature_importance = pd.DataFrame({
+        "feature": feature_names,
         "importance": model.feature_importances_,
-    }).sort_values("importance", ascending=False)
+    }).sort_values("importance", ascending=False).head(10)
 
-    return importance_df.head(n_top)["feature"].tolist()
+    plt.figure()
+    sns.barplot(data=feature_importance, x="importance", y="feature")
+    plt.title("Feature Importance")
+    save_plot("shap_feature_importance.png")
 
 
+# -----------------------------
+# Plot 5: Segment comparison
+# -----------------------------
 def create_segments(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Segment analysis aligned to report:
-    - insurance tenure (X.8)
-    - premium (X.14)
-    """
     df = df.copy()
 
     if "X.8" in df.columns:
@@ -381,63 +390,59 @@ def create_segments(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# =========================================================
-# MAIN
-# =========================================================
+def plot_segment_risk_comparison(seg_df: pd.DataFrame) -> None:
+    if "tenure_segment" not in seg_df.columns:
+        return
 
+    summary = (
+        seg_df.groupby("tenure_segment", observed=False)["LC"]
+        .mean()
+        .reset_index()
+    )
+
+    plt.figure()
+    sns.barplot(data=summary, x="tenure_segment", y="LC")
+    plt.title("Average Loss Cost by Tenure Segment")
+    plt.xlabel("Tenure Segment")
+    plt.ylabel("Average Loss Cost")
+    plt.xticks(rotation=20)
+    save_plot("segment_risk_comparison.png")
+
+
+# -----------------------------
+# Main
+# -----------------------------
 def main() -> None:
+    os.makedirs(PLOTS_DIR, exist_ok=True)
     check_files()
 
-    df_train_raw, df_test_raw = load_data()
-    print("Loaded data.")
-    print("Train shape:", df_train_raw.shape)
-    print("Test shape:", df_test_raw.shape)
+    train_raw, test_raw = load_data()
+    print("Train shape:", train_raw.shape)
+    print("Test shape:", test_raw.shape)
 
-    # Build targets on train
-    df_train = create_targets(df_train_raw)
+    train_df = create_targets(train_raw)
+    train_df = engineer_features(train_df)
+    test_df = engineer_features(test_raw)
 
-    # Feature engineering
-    df_train = engineer_features(df_train)
-    df_test = engineer_features(df_test_raw)
-
-    # Drop raw target-generating columns and IDs from predictors
     cols_to_drop = ["X.1", "X.15", "X.16", "X.17", "X.18"]
-    df_train = df_train.drop(columns=[c for c in cols_to_drop if c in df_train.columns], errors="ignore")
-    df_test = df_test.drop(columns=[c for c in cols_to_drop if c in df_test.columns], errors="ignore")
+    train_df = train_df.drop(columns=[c for c in cols_to_drop if c in train_df.columns], errors="ignore")
+    test_df = test_df.drop(columns=[c for c in cols_to_drop if c in test_df.columns], errors="ignore")
 
-    # Targets
-    y_lc = df_train["LC"].copy()
-    y_halc = df_train["HALC"].copy()
-    y_cs = df_train["CS"].copy()
+    y_lc = train_df["LC"].copy()
+    y_halc = train_df["HALC"].copy()
+    y_cs = train_df["CS"].copy()
 
-    # Features
-    feature_cols = [c for c in df_train.columns if c not in ["LC", "HALC", "CS"]]
-    X_raw = df_train[feature_cols].copy()
-    X_test_raw = df_test[feature_cols].copy()
+    feature_cols = [c for c in train_df.columns if c not in ["LC", "HALC", "CS"]]
+    X, X_test = preprocess_data(train_df, test_df, feature_cols)
 
-    # Project-like preprocessing
-    X, X_test, encoder, imputer = preprocess_like_project(X_raw, X_test_raw, feature_cols)
+    plot_loss_cost_distribution(y_lc)
 
-    # =========================
-    # TASK 1: REGRESSION
-    # =========================
+    # -------------------------
+    # Regression models
+    # -------------------------
+    glm_top_lc = get_glm_top_features(X, y_lc, n_top=8)
+    glm_top_halc = get_glm_top_features(X, y_halc, n_top=8)
 
-    print("\n" + "=" * 60)
-    print("TASK 1: LOSS COST PREDICTION")
-    print("=" * 60)
-
-    # MLP uses all features
-    mlp_lc = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=RANDOM_STATE)
-    mlp_halc = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=RANDOM_STATE)
-
-    # GLM uses top 8 permutation importance features
-    glm_top8_lc = get_permutation_top_features(X, y_lc, n_top=8)
-    glm_top8_halc = get_permutation_top_features(X, y_halc, n_top=8)
-
-    glm_lc = TweedieRegressor(power=1.5, alpha=0.1, max_iter=1000)
-    glm_halc = TweedieRegressor(power=1.5, alpha=0.1, max_iter=1000)
-
-    # XGBoost / LightGBM use tree importance-based top features
     temp_xgb = XGBRegressor(
         objective="reg:tweedie",
         tweedie_variance_power=1.5,
@@ -448,7 +453,6 @@ def main() -> None:
         colsample_bytree=0.8,
         random_state=RANDOM_STATE,
     )
-
     temp_lgb = LGBMRegressor(
         objective="tweedie",
         tweedie_variance_power=1.5,
@@ -463,87 +467,34 @@ def main() -> None:
     lgb_top_lc = get_tree_top_features(temp_lgb, X, np.log1p(y_lc), n_top=15)
     lgb_top_halc = get_tree_top_features(temp_lgb, X, np.log1p(y_halc), n_top=15)
 
-    xgb_lc = XGBRegressor(
-        objective="reg:tweedie",
-        tweedie_variance_power=1.5,
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=5,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=RANDOM_STATE,
-    )
-    xgb_halc = XGBRegressor(
-        objective="reg:tweedie",
-        tweedie_variance_power=1.5,
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=5,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=RANDOM_STATE,
-    )
-
-    lgb_lc = LGBMRegressor(
-        objective="tweedie",
-        tweedie_variance_power=1.5,
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=5,
-        random_state=RANDOM_STATE,
-    )
-    lgb_halc = LGBMRegressor(
-        objective="tweedie",
-        tweedie_variance_power=1.5,
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=5,
-        random_state=RANDOM_STATE,
-    )
+    regression_models = {
+        "MLP_LC": (MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=RANDOM_STATE), X, y_lc, True),
+        "GLM_Tweedie_LC": (TweedieRegressor(power=1.5, alpha=0.1, max_iter=1000), X[glm_top_lc], y_lc, False),
+        "XGBoost_LC": (XGBRegressor(objective="reg:tweedie", tweedie_variance_power=1.5, n_estimators=300,
+                                   learning_rate=0.05, max_depth=5, subsample=0.8,
+                                   colsample_bytree=0.8, random_state=RANDOM_STATE), X[xgb_top_lc], y_lc, True),
+        "LightGBM_LC": (LGBMRegressor(objective="tweedie", tweedie_variance_power=1.5, n_estimators=300,
+                                     learning_rate=0.05, max_depth=5, random_state=RANDOM_STATE), X[lgb_top_lc], y_lc, True),
+        "MLP_HALC": (MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=RANDOM_STATE), X, y_halc, True),
+        "GLM_Tweedie_HALC": (TweedieRegressor(power=1.5, alpha=0.1, max_iter=1000), X[glm_top_halc], y_halc, False),
+        "XGBoost_HALC": (XGBRegressor(objective="reg:tweedie", tweedie_variance_power=1.5, n_estimators=300,
+                                     learning_rate=0.05, max_depth=5, subsample=0.8,
+                                     colsample_bytree=0.8, random_state=RANDOM_STATE), X[xgb_top_halc], y_halc, True),
+        "LightGBM_HALC": (LGBMRegressor(objective="tweedie", tweedie_variance_power=1.5, n_estimators=300,
+                                       learning_rate=0.05, max_depth=5, random_state=RANDOM_STATE), X[lgb_top_halc], y_halc, True),
+    }
 
     regression_results = []
-
-    # LC
-    regression_results.append({
-        "model": "MLP_LC",
-        **evaluate_regression_cv(mlp_lc, X, y_lc, use_log_target=True),
-    })
-    regression_results.append({
-        "model": "GLM_Tweedie_LC",
-        **evaluate_regression_cv(glm_lc, X[glm_top8_lc], y_lc, use_log_target=False),
-    })
-    regression_results.append({
-        "model": "XGBoost_LC",
-        **evaluate_regression_cv(xgb_lc, X[xgb_top_lc], y_lc, use_log_target=True),
-    })
-    regression_results.append({
-        "model": "LightGBM_LC",
-        **evaluate_regression_cv(lgb_lc, X[lgb_top_lc], y_lc, use_log_target=True),
-    })
-
-    # HALC
-    regression_results.append({
-        "model": "MLP_HALC",
-        **evaluate_regression_cv(mlp_halc, X, y_halc, use_log_target=True),
-    })
-    regression_results.append({
-        "model": "GLM_Tweedie_HALC",
-        **evaluate_regression_cv(glm_halc, X[glm_top8_halc], y_halc, use_log_target=False),
-    })
-    regression_results.append({
-        "model": "XGBoost_HALC",
-        **evaluate_regression_cv(xgb_halc, X[xgb_top_halc], y_halc, use_log_target=True),
-    })
-    regression_results.append({
-        "model": "LightGBM_HALC",
-        **evaluate_regression_cv(lgb_halc, X[lgb_top_halc], y_halc, use_log_target=True),
-    })
+    for name, (model, X_model, y_model, use_log) in regression_models.items():
+        result = evaluate_regression_cv(model, X_model, y_model, use_log_target=use_log)
+        result["model"] = name
+        regression_results.append(result)
 
     regression_results_df = pd.DataFrame(regression_results)
     print("\nRegression Results")
     print(regression_results_df.to_string(index=False))
 
-    # Final regression model choice from report: LightGBM
+    # final regression models
     final_lgb_lc = LGBMRegressor(
         objective="tweedie",
         tweedie_variance_power=1.5,
@@ -564,187 +515,71 @@ def main() -> None:
     final_lgb_lc.fit(X[lgb_top_lc], np.log1p(y_lc))
     final_lgb_halc.fit(X[lgb_top_halc], np.log1p(y_halc))
 
-    # =========================
-    # TASK 2: CLASSIFICATION
-    # =========================
-
-    print("\n" + "=" * 60)
-    print("TASK 2: CLAIM CLASSIFICATION")
-    print("=" * 60)
-
-    # Weighted sample vector for weighted boosting
+    # -------------------------
+    # Classification models
+    # -------------------------
     class_counts = y_cs.value_counts()
-    class_weight_map = {
-        0: 1.0,
-        1: class_counts[0] / class_counts[1]
+    sample_weights = y_cs.map({0: 1.0, 1: class_counts[0] / class_counts[1]}).values
+
+    classification_models = {
+        "Boosting": (GradientBoostingClassifier(random_state=RANDOM_STATE), None),
+        "Boosting_Weighted": (GradientBoostingClassifier(random_state=RANDOM_STATE), sample_weights),
+        "RandomForest": (RandomForestClassifier(n_estimators=300, random_state=RANDOM_STATE, n_jobs=-1), None),
+        "LogisticRegression": (LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000, random_state=RANDOM_STATE), None),
+        "LogisticRegression_Lasso": (LogisticRegression(penalty="l1", solver="liblinear", max_iter=1000, random_state=RANDOM_STATE), None),
+        "LogisticRegression_Ridge": (LogisticRegression(penalty="l2", solver="liblinear", C=0.5, max_iter=1000, random_state=RANDOM_STATE), None),
+        "MLP": (MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=200, random_state=RANDOM_STATE), None),
     }
-    sample_weights = y_cs.map(class_weight_map).values
 
-    clf_results = []
+    classification_results = []
+    weighted_boosting_detail = None
 
-    # Boosting
-    boosting = GradientBoostingClassifier(random_state=RANDOM_STATE)
-    clf_results.append({
-        "model": "Boosting",
-        **evaluate_classification_cv(boosting, X, y_cs),
-    })
+    for name, (model, weights) in classification_models.items():
+        result = evaluate_classification_cv(model, X, y_cs, sample_weight=weights)
+        result["model"] = name
+        classification_results.append(result)
 
-    # Weighted boosting
-    weighted_boosting = GradientBoostingClassifier(random_state=RANDOM_STATE)
-    clf_results.append({
-        "model": "Boosting_Weighted",
-        **evaluate_classification_cv(weighted_boosting, X, y_cs, sample_weight=sample_weights),
-    })
+        if name == "Boosting_Weighted":
+            weighted_boosting_detail = result
 
-    # Random Forest
-    rf = RandomForestClassifier(
-        n_estimators=300,
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-    )
-    clf_results.append({
-        "model": "RandomForest",
-        **evaluate_classification_cv(rf, X, y_cs),
-    })
-
-    # Logistic
-    logit = LogisticRegression(
-        penalty="l2",
-        solver="liblinear",
-        max_iter=1000,
-        random_state=RANDOM_STATE,
-    )
-    clf_results.append({
-        "model": "LogisticRegression",
-        **evaluate_classification_cv(logit, X, y_cs),
-    })
-
-    # Logistic Lasso
-    logit_lasso = LogisticRegression(
-        penalty="l1",
-        solver="liblinear",
-        max_iter=1000,
-        random_state=RANDOM_STATE,
-    )
-    clf_results.append({
-        "model": "LogisticRegression_Lasso",
-        **evaluate_classification_cv(logit_lasso, X, y_cs),
-    })
-
-    # Logistic Ridge
-    logit_ridge = LogisticRegression(
-        penalty="l2",
-        solver="liblinear",
-        max_iter=1000,
-        C=0.5,
-        random_state=RANDOM_STATE,
-    )
-    clf_results.append({
-        "model": "LogisticRegression_Ridge",
-        **evaluate_classification_cv(logit_ridge, X, y_cs),
-    })
-
-    # MLP
-    mlp_cls = MLPClassifier(
-        hidden_layer_sizes=(64, 32),
-        max_iter=200,
-        random_state=RANDOM_STATE,
-    )
-    clf_results.append({
-        "model": "MLP",
-        **evaluate_classification_cv(mlp_cls, X, y_cs),
-    })
-
-    clf_results_df = pd.DataFrame([
-        {"model": r["model"], "roc_auc": r["roc_auc"]}
-        for r in clf_results
-    ]).sort_values("roc_auc", ascending=False)
+    classification_results_df = pd.DataFrame(
+        [{"model": r["model"], "roc_auc": r["roc_auc"]} for r in classification_results]
+    ).sort_values("roc_auc", ascending=False)
 
     print("\nClassification Results")
-    print(clf_results_df.to_string(index=False))
+    print(classification_results_df.to_string(index=False))
 
-    # Final classification model choice from report:
-    # weighted boosting selected due to better classification behavior under imbalance
+    plot_model_performance(regression_results_df, classification_results_df)
+
+    if weighted_boosting_detail is not None:
+        plot_roc_curve(weighted_boosting_detail["y_true"], weighted_boosting_detail["y_proba"])
+
     final_cls = GradientBoostingClassifier(random_state=RANDOM_STATE)
     final_cls.fit(X, y_cs, sample_weight=sample_weights)
 
-    # Show weighted boosting details
-    weighted_detail = next(r for r in clf_results if r["model"] == "Boosting_Weighted")
-    print("\nWeighted Boosting Confusion Matrix")
-    print(weighted_detail["confusion_matrix"])
-    print("\nWeighted Boosting Classification Report")
-    print(weighted_detail["classification_report"])
+    plot_shap_feature_importance(final_lgb_lc, X, lgb_top_lc)
 
-    # =========================
-    # SHAP INTERPRETATION
-    # =========================
-
-    print("\n" + "=" * 60)
-    print("MODEL INTERPRETATION")
-    print("=" * 60)
-
-    if SHAP_AVAILABLE:
-        try:
-            explainer = shap.TreeExplainer(final_lgb_lc)
-            shap_values = explainer.shap_values(X[lgb_top_lc])
-
-            # LightGBM regression shap values shape: (n_samples, n_features)
-            mean_abs_shap = np.abs(shap_values).mean(axis=0)
-
-            shap_df = pd.DataFrame({
-                "feature": lgb_top_lc,
-                "mean_abs_shap": mean_abs_shap,
-            }).sort_values("mean_abs_shap", ascending=False)
-
-            print("\nTop SHAP Features (final LightGBM LC)")
-            print(shap_df.head(10).to_string(index=False))
-        except Exception as e:
-            print("SHAP step skipped:", e)
-    else:
-        print("SHAP not installed; skipped.")
-
-    # =========================
-    # SEGMENT ANALYSIS
-    # =========================
-
-    print("\n" + "=" * 60)
-    print("SEGMENT ANALYSIS")
-    print("=" * 60)
-
-    seg_df = create_targets(df_train_raw)
+    seg_df = create_targets(train_raw)
     seg_df = create_segments(seg_df)
+    plot_segment_risk_comparison(seg_df)
 
-    if "tenure_segment" in seg_df.columns:
-        tenure_summary = seg_df.groupby("tenure_segment")["LC"].agg(["mean", "std", "count"])
-        print("\nLC by tenure segment")
-        print(tenure_summary.to_string())
-
-    if "premium_segment" in seg_df.columns:
-        premium_summary = seg_df.groupby("premium_segment")["LC"].agg(["mean", "std", "count"])
-        print("\nLC by premium segment")
-        print(premium_summary.to_string())
-
-    # =========================
-    # FINAL TEST PREDICTIONS
-    # =========================
-
-    print("\n" + "=" * 60)
-    print("FINAL TEST PREDICTIONS")
-    print("=" * 60)
-
+    # -------------------------
+    # Final predictions
+    # -------------------------
     lc_pred = np.clip(np.expm1(final_lgb_lc.predict(X_test[lgb_top_lc])), 0, None)
     halc_pred = np.clip(np.expm1(final_lgb_halc.predict(X_test[lgb_top_halc])), 0, None)
     cs_pred = final_cls.predict_proba(X_test)[:, 1]
 
-    final_result = pd.DataFrame({
+    final_predictions = pd.DataFrame({
         "LC": lc_pred,
         "HALC": halc_pred,
         "CS": cs_pred,
     })
 
-    final_result.to_csv(PREDICTION_OUTPUT, index=False)
-    print(f"Saved predictions to {PREDICTION_OUTPUT.resolve()}")
-    print(final_result.head().to_string(index=False))
+    final_predictions.to_csv(PREDICTION_OUTPUT, index=False)
+
+    print(f"\nPredictions saved to: {PREDICTION_OUTPUT}")
+    print("Plots saved to:", PLOTS_DIR)
 
 
 if __name__ == "__main__":
