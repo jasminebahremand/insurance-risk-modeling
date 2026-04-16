@@ -3,8 +3,6 @@ Insurance Risk Modeling
 Predictive Modeling · Insurance Analytics
 """
 
-from __future__ import annotations
-
 import os
 import warnings
 from pathlib import Path
@@ -15,7 +13,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from lightgbm import LGBMRegressor
-from scipy.stats import pointbiserialr
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
