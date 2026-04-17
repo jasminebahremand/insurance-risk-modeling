@@ -28,11 +28,24 @@ Python · Pandas · Scikit-learn · XGBoost · LightGBM · SHAP · Statsmodels
 - `requirements.txt` — project dependencies
 
 ## Plots
-- `loss_cost_distribution.png`
-- `model_performance_comparison.png`
-- `roc_curve.png`
-- `shap_feature_importance.png`
-- `segment_risk_comparison.png`
+## Key Visual Insights
+
+### Model Performance (R²)
+![R2 Comparison](plots/model_performance_r2_comparison.jpg)
+LightGBM outperformed XGBoost across both targets; XGBoost showed poor fit for HALC (negative R²).
+
+### Classification Model Performance (ROC-AUC)
+![ROC AUC](plots/classification_model_roc_auc_comparison.jpg)
+Gradient Boosting achieved the highest ROC-AUC, indicating strongest performance in distinguishing claim vs. no-claim cases.
+
+### Loss Cost by Customer Tenure
+![Tenure](plots/loss_cost_by_tenure_segment.jpg)
+Loss cost peaks among Emerging customers (3–5 years), indicating elevated risk early in the policy lifecycle.
+
+### Loss Cost by Premium Tier
+![Premium](plots/loss_cost_by_premium_tier.jpg)
+Lower premium tiers exhibit higher average loss cost, suggesting potential underpricing risk.
+
 
 ## How to Run
 ```bash
