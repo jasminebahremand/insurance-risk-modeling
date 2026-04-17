@@ -27,7 +27,6 @@ Python · Pandas · Scikit-learn · XGBoost · LightGBM · SHAP · Statsmodels
 - `insurance_risk_modeling.py` — full modeling workflow
 - `requirements.txt` — project dependencies
 
-## Plots
 ## Key Visual Insights
 
 ### Model Performance (R²)
