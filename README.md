@@ -52,7 +52,7 @@ Low-tier policyholders show comparable average loss costs to high-tier — sugge
 ## Methods
 
 - Feature engineering from raw date fields (age, vehicle age, driving experience, policy duration)
-- Regression: GLM (Tweedie), MLP, XGBoost, LightGBM
+- Regression: GLM (Tweedie), Random Forest, Gradient Boosting, XGBoost, LightGBM, Neural Network
 - Classification: Gradient Boosting, Random Forest, Logistic Regression (Lasso/Ridge), MLP
 - 5-fold cross-validation and hyperparameter tuning via grid search
 - SHAP for model interpretation and feature importance
