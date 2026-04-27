@@ -9,7 +9,7 @@ Built predictive models to estimate insurance claim likelihood and expected loss
 ---
 
 ## Key Findings
-- **LightGBM achieved R²=0.77 and MAE=14.14** on loss cost prediction — strongest across all models tested
+- **LightGBM achieved the lowest RMSE (548.74)** on loss cost prediction — strongest across all models tested
 - **Gradient Boosting achieved ROC-AUC=0.7889** on claim classification — highest across seven models
 - **Sample weighting nearly tripled recall for actual claims** (0.06 → 0.18) with only marginal ROC-AUC reduction — a meaningfully better model for real-world use
 - **Insurance tenure and net premium were the top SHAP drivers** — Emerging policyholders (3–5 years) showed the highest average loss cost and volatility; Loyal customers (11+ years) showed the lowest
@@ -18,10 +18,10 @@ Built predictive models to estimate insurance claim likelihood and expected loss
 
 ## Key Visuals
 
-### Model Performance Comparison (R²)
-![R2 Comparison](plots/model_performance_r2_comparison.jpg)
+### Model Performance Comparison (RMSE)
+![RMSE Comparison](plots/model_performance_r2_comparison.jpg)
 
-LightGBM achieved R²=0.77 on loss cost prediction, outperforming all other models across both LC and HALC targets — making it the clear choice for deployment.
+LightGBM achieved the lowest CV HALC RMSE (548.74) across all six regression models — outperforming Gradient Boosting, GLM, Neural Network, Random Forest, and XGBoost — making it the clear choice for deployment.
 
 ### Classification Model Performance (ROC-AUC)
 ![ROC AUC](plots/classification_model_roc_auc_comparison.jpg)
@@ -31,7 +31,7 @@ Gradient Boosting achieved the highest ROC-AUC (0.7889) across all seven classif
 ### Loss Cost by Customer Tenure
 ![Tenure](plots/loss_cost_by_tenure_segment.jpg)
 
-Emerging policyholders (3–5 years) carry the highest average loss cost and greatest volatility. Loss cost decreases as tenure increases — long-term customers represent lower and more predictable underwriting risk.
+Emerging policyholders (3–5 years) carry the highest average loss cost and greatest volatility. Loyal customers (11+ years) show the lowest and most predictable risk — supporting retention-focused pricing strategy.
 
 | Segment | Mean LC |
 |---------|---------|
@@ -43,7 +43,7 @@ Emerging policyholders (3–5 years) carry the highest average loss cost and gre
 ### Loss Cost by Premium Tier
 ![Premium](plots/loss_cost_by_premium_tier.jpg)
 
-Low-tier policyholders show comparable average loss costs to high-tier — suggesting low-premium customers may be systematically underpriced relative to their actual risk.
+High-premium customers carried the highest average loss cost (1014.69) — risk scales clearly with premium tier. Low-premium customers show the highest variability (σ=2993), indicating potential systematic underpricing at the low end.
 
 ---
 
