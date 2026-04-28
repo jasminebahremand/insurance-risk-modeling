@@ -1,18 +1,20 @@
-# When Does a Customer Become a Liability?
+# Which Policyholders Will Cost the Most?
 **Predictive Modeling · Insurance Analytics · LightGBM · SHAP**
 
 ---
 
 ## Overview
-Built predictive models to estimate insurance claim likelihood and expected loss cost for new policyholders, translating model outputs into actionable pricing, underwriting, and retention strategies.
+Insurance companies price policies at onboarding without a reliable way to predict which customers will generate the highest claims. This project built and compared models to predict claim likelihood and expected loss cost for new policyholders — translating outputs into pricing, underwriting, and retention strategy.
+
+> Full write-up: https://jasminebahremand.my.canva.site/
 
 ---
 
 ## Key Findings
-- **LightGBM achieved the lowest RMSE (548.74)** on loss cost prediction — strongest across all models tested
+- **LightGBM achieved the lowest RMSE (548.74)** on loss cost prediction — strongest across all regression models tested
 - **Gradient Boosting achieved ROC-AUC=0.7889** on claim classification — highest across seven models
 - **Sample weighting nearly tripled recall for actual claims** (0.06 → 0.18) with only marginal ROC-AUC reduction — a meaningfully better model for real-world use
-- **Insurance tenure and net premium were the top SHAP drivers** — Emerging policyholders (3–5 years) showed the highest average loss cost and volatility; Loyal customers (11+ years) showed the lowest
+- **Emerging policyholders (3–5 years) carried the highest average loss cost ($713)** — nearly double that of Loyal customers (11+ years, $386) — risk does not grow linearly with tenure
 
 ---
 
@@ -20,30 +22,26 @@ Built predictive models to estimate insurance claim likelihood and expected loss
 
 ### Model Performance Comparison (RMSE)
 ![RMSE Comparison](plots/model_performance_r2_comparison.jpg)
-
-LightGBM achieved the lowest CV HALC RMSE (548.74) across all six regression models — outperforming Gradient Boosting, GLM, Neural Network, Random Forest, and XGBoost — making it the clear choice for deployment.
+LightGBM achieved the lowest CV RMSE (548.74) across all regression models tested — outperforming Gradient Boosting, GLM, Neural Network, Random Forest, and XGBoost.
 
 ### Classification Model Performance (ROC-AUC)
 ![ROC AUC](plots/classification_model_roc_auc_comparison.jpg)
-
-Gradient Boosting achieved the highest ROC-AUC (0.7889) across all seven classification models tested — model choice meaningfully impacts claim detection performance.
+Gradient Boosting achieved the highest ROC-AUC (0.7889) across all seven classification models — correctly identifying high-risk policyholders 79% of the time.
 
 ### Loss Cost by Customer Tenure
 ![Tenure](plots/loss_cost_by_tenure_segment.jpg)
+Emerging policyholders (3–5 years) carry the highest average loss cost and greatest volatility. Loyal customers (11+ years) show the lowest and most predictable risk.
 
-Emerging policyholders (3–5 years) carry the highest average loss cost and greatest volatility. Loyal customers (11+ years) show the lowest and most predictable risk — supporting retention-focused pricing strategy.
-
-| Segment | Mean LC |
-|---------|---------|
-| New (0–2 yrs) | 598 |
-| Emerging (3–5 yrs) | 713 |
-| Established (6–10 yrs) | 664 |
-| Loyal (11+ yrs) | 386 |
+| Segment | Mean Loss Cost |
+|---------|---------------|
+| New (0–2 yrs) | $598 |
+| Emerging (3–5 yrs) | $713 |
+| Established (6–10 yrs) | $664 |
+| Loyal (11+ yrs) | $386 |
 
 ### Loss Cost by Premium Tier
 ![Premium](plots/loss_cost_by_premium_tier.jpg)
-
-High-premium customers carried the highest average loss cost (1014.69) — risk scales clearly with premium tier. Low-premium customers show the highest variability (σ=2993), indicating potential systematic underpricing at the low end.
+Low-premium customers show the highest variability in claims costs — indicating systematic underpricing at the low end of the portfolio.
 
 ---
 
