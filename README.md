@@ -12,10 +12,9 @@ Insurance companies price policies at onboarding without a reliable way to predi
 ---
 
 ## Key Findings
-
 - **LightGBM achieved the lowest RMSE (564.08)** on loss cost prediction — strongest across all regression models tested
 - **XGBoost achieved ROC-AUC of 0.7921** on claim classification — correctly identifying high-risk policyholders 79% of the time
-- **Emerging policyholders (3–5 years) carried the highest average loss cost ($713)** — nearly double that of Loyal customers (11+ years, $386) — risk does not grow linearly with tenure
+- **Emerging policyholders (3–5 years) carried the highest average loss cost ($713)** — nearly double that of Loyal customers (11+ years, $408) — risk does not grow linearly with tenure
 - **Low-premium customers show disproportionately high claims costs** relative to what they paid, suggesting systematic underpricing at the low end of the portfolio
 
 ---
@@ -39,7 +38,7 @@ Emerging policyholders (3–5 years) carry the highest average loss cost. Loyal 
 | New (0–2 yrs) | $598 |
 | Emerging (3–5 yrs) | $713 |
 | Established (6–10 yrs) | $664 |
-| Loyal (11+ yrs) | $386 |
+| Loyal (11+ yrs) | $408 |
 
 ---
 
