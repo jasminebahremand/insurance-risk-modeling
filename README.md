@@ -46,7 +46,7 @@ Emerging policyholders (3–5 years) carry the highest average loss cost. Loyal 
 
 - Feature engineering from raw date fields (age, vehicle age, driving experience, policy duration)
 - Regression: GLM (Tweedie), Random Forest, Gradient Boosting, XGBoost, LightGBM, Neural Network
-- Classification: XGBoost, LightGBM, Random Forest, Logistic Regression (L1), Neural Network
+- Classification: Gradient Boosting, XGBoost, LightGBM, Random Forest, MLP, Logistic Regression (L1/Lasso/Ridge)
 - 5-fold cross-validation for model selection
 - SHAP for model interpretation and feature importance
 - Customer segmentation by insurance tenure and premium tier
