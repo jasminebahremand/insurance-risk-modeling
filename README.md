@@ -4,7 +4,6 @@
 ---
 
 ## Overview
-
 Insurance companies price policies at onboarding without a reliable way to predict which customers will generate the highest claims. This project built and compared models to predict claim likelihood and expected loss cost for new policyholders — translating outputs into pricing, underwriting, and retention strategy.
 
 > Full write-up: https://jasminebahremand.my.canva.site/
@@ -43,7 +42,6 @@ Emerging policyholders (3–5 years) carry the highest average loss cost. Loyal 
 ---
 
 ## Methods
-
 - Feature engineering from raw date fields (age, vehicle age, driving experience, policy duration)
 - Regression: GLM (Tweedie), Random Forest, Gradient Boosting, XGBoost, LightGBM, Neural Network
 - Classification: Gradient Boosting, XGBoost, LightGBM, Random Forest, MLP, Logistic Regression (L1/Lasso/Ridge)
@@ -54,30 +52,28 @@ Emerging policyholders (3–5 years) carry the highest average loss cost. Loyal 
 ---
 
 ## Tech Stack
-
-Python · Pandas · Scikit-learn · XGBoost · LightGBM · SHAP · TensorFlow · Matplotlib
+Python · Pandas · Scikit-learn · XGBoost · LightGBM · SHAP · Matplotlib
 
 ---
 
 ## How to Run
-
 ```bash
+git clone https://github.com/jasminebahremand/insurance-risk-modeling.git
+cd insurance-risk-modeling
 pip install -r requirements.txt
 jupyter notebook insurance_risk_modeling.ipynb
 ```
-
-Upload `insurance_train.csv` to `/content/` before running.
+`insurance_train.csv` is included in this repo — no manual upload needed. Opening the notebook in Colab also works; it will pull the CSV straight from GitHub if it's not found locally.
 
 ---
 
 ## Data
-
-Dataset provided as part of USC Marshall coursework and is not publicly available. Key features include policy dates, vehicle registration year, net premium, insurance tenure, and demographic fields. Engineered features: age, vehicle age, driving experience, policy duration, and time since last renewal.
+Dataset (`insurance_train.csv`) is included in this repo. It was originally provided as part of USC Marshall coursework. Key features include policy dates, vehicle registration year, net premium, insurance tenure, and demographic fields. Engineered features: age, vehicle age, driving experience, policy duration, and time since last renewal.
 
 ---
 
 ## Files
-
 - `insurance_risk_modeling.ipynb` — full modeling notebook
 - `requirements.txt` — dependencies
+- `insurance_train.csv` — dataset
 - `plots/` — generated visualizations
